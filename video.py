@@ -21,6 +21,7 @@ import dlib
 import threading
 from tqdm import tqdm
 import skvideo.io
+import imutils
 warnings.filterwarnings('ignore')
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -173,7 +174,7 @@ def get_param(args, line, feacRect, simg, transform, plfd_backbone, handle, file
     
     strf = ''.join(str(feature).lstrip('[').rstrip(']'))
     #print(strf)
-    print(line)
+    #print(line)
     iname = f"{line+1}:{strf}:"
     filename.write(iname)
     #print(point_dict)
@@ -227,59 +228,43 @@ def get_param(args, line, feacRect, simg, transform, plfd_backbone, handle, file
                 iname = "{}:".format(str(point_dict[f'{i}']).lstrip('[').rstrip(']'))
                 filename.write(iname) 
         filename.write('\n')
-        
-def image_process(args, inputname, video, transform, plfd_backbone, handle, face_detector):
 
-    img = cv2.imread(inputname)
-
-    nametxt = f'txt/{video[:-4]}_image.txt'
-    print(nametxt)
-    filename = open(nametxt, mode='w+')
-    pose = ''
-    land = ''
-    if args.landmarks:
-        land = "[Axis]"
-    
-    if args.pose:
-        pose = "[Pose]"
-        
-    frame_num = 1
-    iname = f"[{frame_num}]"+pose+land
-    filename.write(iname)
-    filename.write('\n')   
-
-    face_rects = face_detector(img, 0)
-    iname = f"[{frame_num}] {len(face_rects)}"
-    filename.write(iname)
-    filename.write('\n') 
-    for line, feacRect in enumerate(face_rects):
-        t1 = threading.Thread(target=get_param, args=(args, line, feacRect, simg,transform, plfd_backbone, handle, filename))
-        t1.start()
-    
-    t1.join()
 def test_rotate(video):
     metadata = skvideo.io.ffprobe(video)
     rotate = 0
-    d = metadata['video'].get('tag')[0]
-    if d.setdefault('@key') == 'rotate': #获取视频自选择角度
-        rotate = 360-int(d.setdefault('@value'))
+    print(metadata['video'])
+    try:
+        d = metadata['video'].get('tag')[0]
+        if d.setdefault('@key') == 'rotate': #获取视频自选择角度
+            rotate = 360-int(d.setdefault('@value'))
+    except:
+        return None,None
     return d,rotate
         
 def video_process(args, inputname, video, transform, plfd_backbone, handle, face_detector):
     videoCapture = cv2.VideoCapture(inputname)
     #cv2.imwrite("1.jpg",img)
-    
+    if not videoCapture.isOpened():
+        return
     d, rotate = test_rotate(inputname)
-    print(rotate)
+
+    #print(rotate)
     
     
     fps = videoCapture.get(cv2.CAP_PROP_FPS)
     size = (int(videoCapture.get(cv2.CAP_PROP_FRAME_WIDTH)),int(videoCapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
     frame_num = int(videoCapture.get(7))
     save_num = frame_num
+
+    if frame_num <= args.stips:
+        print("跳帧数超过总视频帧数，请减小strips参数值")
+        return
+
     print("size:",frame_num)
-     
-    nametxt = 'txt/{}.txt'.format(video[:-4])
+    if args.suffix is not None:
+        nametxt = 'txt/{}_{}.txt'.format(video[:-4], args.suffix)
+    else:
+        nametxt = 'txt/{}.txt'.format(video[:-4])
     print(nametxt)
     filename = open(nametxt, mode='w+')
     pose = ''
@@ -290,10 +275,8 @@ def video_process(args, inputname, video, transform, plfd_backbone, handle, face
     if args.pose:
         pose = "[Pose]"
 
-    if frame_num <= args.stips:
-	    print('please decrease strips ')
-		return
-		
+
+
     if args.stips:
         frame_num = math.ceil(frame_num/(args.stips+1))
 
@@ -306,7 +289,7 @@ def video_process(args, inputname, video, transform, plfd_backbone, handle, face
     for idx in tqdm(range(save_num),ascii=True,desc=nametxt):
     
         success,simg = videoCapture.read()
-        if rotate:
+        if d is not None and rotate:
             simg = imutils.rotate(simg, 360-int(d.setdefault('@value')))
         if success:
             if idx%(args.stips+1) == 0:
@@ -316,13 +299,14 @@ def video_process(args, inputname, video, transform, plfd_backbone, handle, face
                 iname = f"[{save_id}] {len(face_rects)}"
                 filename.write(iname)
                 filename.write('\n') 
+
                 for line, feacRect in enumerate(face_rects):
-                    t1 = threading.Thread(target=get_param, args=(args, line, feacRect, simg,transform, plfd_backbone, handle, filename))
-                    t1.start()
+                    get_param(args, line, feacRect, simg,transform, plfd_backbone, handle, filename)
+                    #t1 = threading.Thread(target=get_param, args=(args, line, feacRect, simg,transform, plfd_backbone, handle, filename))
+                    #t1.start()
             else:
                 continue
                 
-            t1.join()
         else:
             break
 
@@ -335,12 +319,9 @@ def run(args, inputname, video, transform, plfd_backbone, handle, face_detector)
     
     _, typen = ext
     
-    if typen == '.jpg' or typen == '.png':
-        image_process(args, inputname, video, transform, plfd_backbone, handle, face_detector)
-    elif typen == '.avi' or typen == '.mp4' or typen == '.MP4':
+    if typen == '.avi' or typen == '.mp4' or typen == '.MP4':
         video_process(args, inputname, video, transform, plfd_backbone, handle, face_detector)
-    else:
-        print("输入视频错误")
+
 def main(args):
 
     checkpoint = torch.load(args.model_path, map_location=device)
@@ -400,6 +381,11 @@ def parse_args():
         default=10,
         help="frame tips",
         type=int)
+    parser.add_argument(
+        "--suffix",
+        default=None,
+        help="suffix name",
+        type=str)
     args = parser.parse_args()
     return args
 

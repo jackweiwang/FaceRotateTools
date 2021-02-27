@@ -22,6 +22,7 @@ import threading
 from tqdm import tqdm
 import skvideo.io
 import imutils
+import json
 warnings.filterwarnings('ignore')
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -81,7 +82,7 @@ def point_point(point_1,point_2):
     y2 = point_2[1]
     distance = ((x1-x2)**2 +(y1-y2)**2)**0.5
     return distance
-def get_param(args, line, feacRect, simg, transform, plfd_backbone, handle, filename, edge = 20):
+def get_param(args, line, feacRect, simg, transform, plfd_backbone, handle, edge = 20):
    #cv2.rectangle(img,  tuple([feacRect.rect.left(), feacRect.rect.top()]), tuple([feacRect.rect.right(), feacRect.rect.bottom()]), (0, 255, 255), 2)
     height, width = simg.shape[:2]
     top = feacRect.top()-edge
@@ -172,14 +173,14 @@ def get_param(args, line, feacRect, simg, transform, plfd_backbone, handle, file
     #print(feature)
     feature = feature.tolist()
     
-    strf = ''.join(str(feature).lstrip('[').rstrip(']'))
+    #strf = ''.join(str(feature).lstrip('[').rstrip(']'))
     #print(strf)
     #print(line)
-    iname = f"{line+1}:{strf}:"
-    filename.write(iname)
+    line['Feature'] = feature
+    #filename.write(iname)
     #print(point_dict)
 
-    filename.write('\n')        
+    #filename.write('\n')        
     if args.pose:
         #yaw
         point1 = [get_num(point_dict, 1, 0), get_num(point_dict, 1, 1)]
@@ -208,31 +209,29 @@ def get_param(args, line, feacRect, simg, transform, plfd_backbone, handle, file
         #cv2.putText(img,f"Head_Pitch(degree): {pitch}",(30,100),cv2.FONT_HERSHEY_COMPLEX_SMALL,1,(0,255,0),2)
         #cv2.putText(img,f"Head_Roll(degree): {roll}",(30,150),cv2.FONT_HERSHEY_COMPLEX_SMALL,1,(0,255,0),2)
         
-        iname = "{},".format(pitch)#pitch:
-        filename.write(iname)                  
-        iname = "{},".format(yaw)#yaw:
-        filename.write(iname)
-        iname = "{}".format(roll)#roll:
-        filename.write(iname)
-        filename.write('\n')
+        line["Rotate"] = [pitch,yaw,roll]
     #filename.write('\n')
     if args.landmarks:
+        marks = []
         for i in range(len(point_dict)):
             #print(point_dict[f'{i}'])
             point_dict[f'{i}'][0] = point_dict[f'{i}'][0] + feacRect.left()-edge
             point_dict[f'{i}'][1] = point_dict[f'{i}'][1] + feacRect.top()-edge
             if i < len(point_dict):
-                iname = "{},".format(str(point_dict[f'{i}']).lstrip('[').rstrip(']'))
-                filename.write(iname)
+                #iname = "{},".format(str(point_dict[f'{i}']).lstrip('[').rstrip(']'))
+                marks.append(point_dict[f'{i}'])
             else:
-                iname = "{}:".format(str(point_dict[f'{i}']).lstrip('[').rstrip(']'))
-                filename.write(iname) 
-        filename.write('\n')
+                #iname = "{}:".format(str(point_dict[f'{i}']).lstrip('[').rstrip(']'))
+                marks.append(point_dict[f'{i}'])
+        line["Landmarks"] = marks 
+        #filename.write('\n')
+    return line
+
 
 def test_rotate(video):
     metadata = skvideo.io.ffprobe(video)
     rotate = 0
-    print(metadata['video'])
+    #print(metadata['video'])
     try:
         d = metadata['video'].get('tag')[0]
         if d.setdefault('@key') == 'rotate': #获取视频自选择角度
@@ -261,28 +260,36 @@ def video_process(args, inputname, video, transform, plfd_backbone, handle, face
         return
 
     print("size:",frame_num)
+
+    data = {
+        "AllFrameNum":0,
+        "Pose":False,
+        "Axis":False,
+
+    }
+
+    #data = json.dumps(odci)
+
     if args.suffix is not None:
-        nametxt = 'txt/{}_{}.txt'.format(video[:-4], args.suffix)
+        nametxt = 'json/{}_{}.json'.format(video[:-4], args.suffix)
     else:
-        nametxt = 'txt/{}.txt'.format(video[:-4])
+        nametxt = 'json/{}.json'.format(video[:-4])
     print(nametxt)
-    filename = open(nametxt, mode='w+')
+
     pose = ''
     land = ''
     if args.landmarks:
-        land = "[Axis]"
+        data["Axis"] = True
     
     if args.pose:
-        pose = "[Pose]"
+        data["Pose"] = True
 
 
 
     if args.stips:
         frame_num = math.ceil(frame_num/(args.stips+1))
 
-    iname = f"[{frame_num}]"+pose+land
-    filename.write(iname)
-    filename.write('\n')   
+    data['AllFrameNum'] = frame_num
 
     save_id = 0 
 
@@ -296,20 +303,29 @@ def video_process(args, inputname, video, transform, plfd_backbone, handle, face
 
                 save_id = save_id + 1
                 face_rects = face_detector(simg, 0)
-                iname = f"[{save_id}] {len(face_rects)}"
-                filename.write(iname)
-                filename.write('\n') 
+                #framenum = data['FrameNum'][f'{save_id}']
+
+
+                #filename.write(iname)
+                #filename.write('\n') 
 
                 for line, feacRect in enumerate(face_rects):
-                    get_param(args, line, feacRect, simg,transform, plfd_backbone, handle, filename)
+                    #framenum[f'{line}'] = line
+                    data.setdefault(f'FrameNum_{save_id}', {})[f'FaceNum_{line}'] = {}
+                    get_param(args, data.setdefault(f'FrameNum_{save_id}', {})[f'FaceNum_{line}'], feacRect, simg,transform, plfd_backbone, handle)
                     #t1 = threading.Thread(target=get_param, args=(args, line, feacRect, simg,transform, plfd_backbone, handle, filename))
                     #t1.start()
+
             else:
                 continue
                 
         else:
             break
 
+
+    json_str = json.dumps(data)
+    with open(nametxt, 'w') as json_file:
+        json_file.write(json_str)
 
 def run(args, inputname, video, transform, plfd_backbone, handle, face_detector):
 
@@ -378,7 +394,7 @@ def parse_args():
         help="lanmarks")
     parser.add_argument(
         "--stips",
-        default=10,
+        default=100,
         help="frame tips",
         type=int)
     parser.add_argument(
